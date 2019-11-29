@@ -145,7 +145,7 @@ def crossValidate(df, folds, k, classifier, features, sampling_method, ratio, po
         notfraud_count = train.select("Class").where(train.Class == 0.0).count()
         total_count = train.select("Class").count()
         balance_ratio = notfraud_count / total_count
-        train=train.withColumn("classWeights", when(train.Outcome == 1,balance_ratio).otherwise(1-balance_ratio))
+        train=train.withColumn("classWeights", when(train.Class == 1.0,balance_ratio).otherwise(1-balance_ratio))
         
         train = sample(train, sampling_method, ratio)
         vectorAssembler = VectorAssembler(inputCols = features, outputCol = 'features')
