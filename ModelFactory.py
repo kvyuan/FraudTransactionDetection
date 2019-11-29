@@ -1,130 +1,326 @@
+#libraries for modeling
 from multiprocessing.pool import ThreadPool
+from pyspark import SparkContext
+from pyspark.sql import SQLContext, SparkSession, Window, Row
+from pyspark.ml.linalg import Vectors
+from pyspark.ml.feature import VectorAssembler
+from pyspark.ml.evaluation import RegressionEvaluator
+import pyspark.sql.functions as F
+import itertools
+from itertools import repeat
+import pickle
+import pyspark
+import copy
 
-Class CreateBestModel(self, algo, avgfscore, avgrecall, hyperparams, best_model, result):
-  def __init__(self, algo, avgfscore, avgrecall, hyperparams, best_model, result):
-    self.algo = algo
-    self.avgFScore = avgfscore
-    self.avgRecall = avgrecall
-    self.hyperParams = hyperparams
-    self.model = best_model
-    self.gsResult = result
+from pyspark.ml.classification import MultilayerPerceptronClassifier
+from pyspark.ml.evaluation import MulticlassClassificationEvaluator
 
-Class ModelFactory(self, df, n_thread):
-  def __init__(self,df):
-    self.folds = df.ramdomsplit[0.2,0.2,0.2,0.2,0.2]
-    self.pool = ThreadPool(n_thread)
-    self.modelobj = None
+#libraries for plotting
+import matplotlib.gridspec as gridspec
+import seaborn as sns
+import pandas as pd
+import numpy as np
+from scipy import stats
+import matplotlib.pyplot as plt
 
-  @private class method
-  def _generateParamGrid(self, *args):
-    grid = itertools.product(*args)
+class CreateBestModel:
+    def __init__(self, algo, avgprecision, avgrecall, avgfscore, hyperparams, best_model):
+        self.algo = algo
+        self.avgPrecision = avgprecision
+        self.avgFScore = avgfscore
+        self.avgRecall = avgrecall
+        self.hyperParams = hyperparams
+        self.model = best_model
+
+#function-based
+def sample(df, sampling_method, ratio):
+
+    notfraud = df.select('*').where(df.Class == 0.0)
+    fraud = df.select('*').where(df.Class == 1.0)
+
+    if sampling_method == "over":
+        print("oversampling")
+        nrows = notfraud.select("Class").count()
+        sample_size = int(nrows*ratio/(1-ratio))
+        sampled = fraud.rdd.takeSample(True, sample_size, 46)
+        fraud = sqlContext.createDataFrame(sampled)
+
+    elif sampling_method == "under":
+        print("undersampling")
+        nrows = fraud.select("Class").count()
+        sample_size = int(nrows*(1-ratio)/ratio)
+        sampled = notfraud.rdd.takeSample(False, sample_size, 46)
+        notfraud = sqlContext.createDataFrame(sampled)
+
+    sampled = fraud.union(notfraud)
+    fraud_count = sampled.select("Class").where(sampled.Class == 1.0).count()
+    tot_count = sampled.select("Class").count()
+    fraud_ratio = fraud_count / tot_count
+
+    print("train after sampling: " + str(tot_count))
+    print("fraud ratio: " + str(fraud_ratio))
+
+    #shuffle undersampled dataframe
+    nrows = sampled.select("Class").count()
+    shuffled = sampled.rdd.takeSample(False, nrows)
+    shuffled_df = sqlContext.createDataFrame(shuffled)
+
+    return shuffled_df
+
+def generateParamGrid(*args):
+    grid = list(itertools.product(*args))
     return grid
 
-  @private class method
-  def _generateClassifier(self, algo, params):
+def generateClassifier(algo, params, features):
 
     ############################################################################
     #TODO: complete this section
 
-    def lr(self, params):
-      return lr classifier
+    def lr(params,features):
+        lrClassifier = LogisticRegression(featuresCol = 'features',
+                                          labelCol = 'Class',
+                                          threshold=params[0])
+                                          #maxIter=params[0],
+                                          #regParam=params[1],
+                                          #elasticNetParam=params[2])
+        return lrClassifier
 
-    def gbm(self, params):
-      return gbm classifier
 
-    def rf(self,params)
-      return rf classifer
+    def gbm(params,features):
+        gbmClassifier = GBTClassifier(featuresCol = 'features',
+                                      labelCol = 'Class',
+                                      maxDepth = params[0],
+                                      minInfoGain = params[1])
+        return gbmClassifier
 
-    def mlp(self, params)
-      return mlp classifier
+    def rf(params,features):
+        rfClassifier = RandomForestClassifier(featuresCol='features',
+                                              labelCol='Class',
+                                              maxDepth=params[0],
+                                              minInfoGain=params[1],
+                                              numTrees=params[2])
 
-    def svm(self,params):
-      return mlp classifier
+        return rfClassifier
+
+    def mlp(params,features):
+        input_layers = len(features)
+        layers = [input_layers, params[1], 2]
+        print(layers)
+        mlpClassifier = MultilayerPerceptronClassifier(featuresCol = 'features',
+                                                       labelCol = 'Class',
+                                                       maxIter = params[0],
+                                                       layers = layers,
+                                                       stepSize = params[2])
+        return mlpClassifier
+
+    def svm(params, features):
+        return
+
+    def xg(params,features):
+        return
     ############################################################################
 
     getClassifier = {
-    'lr':lr
-    'gbm':gbm
-    'rf':rf
-    'mlp':mlp
-    'svm':svm
-    'xg':xg}
+        'lr':lr,
+        'gbm':gbm,
+        'rf':rf,
+        'mlp':mlp,
+        'svm':svm,
+        'xg':xg}
 
-    return getClassifier[algo](self,params)
+    return getClassifier[algo](params,features)
 
-  @private class method
-  def _crossValidate(self, folds, classifier, undersample_ratio):
-    recall_sum = 0
-    precision_sum = 0
-    F1_sum = 0
-    for fold in folds:
-      validation = fold
-      ############################################################################
-      #TODO: translate to pyspark sql
-      training = modeling_df - validation
-      undersampled_training = undersample(training, non-fraud=0.7)
-      model = undersampled_training.fit
-      validation_result = model.test(validation)
-      recall = validation_result.recall
-      precision = validation_result.precision
-      ############################################################################
-      F1 = 2 * precision * recall / (precision + recall)
-      recall_sum += recall
-      precision_sum = precision
-    metrics = [recall_sum, precision_sum, F1_sum]
-    avgmetrics[:] = [metric / 5 for metric in metrics]
-    return avgmetrics
+def crossValidate(df, folds, k, classifier, features, sampling_method, ratio, pool):
 
-  def _collectResult(self, folds, algo, params, undersample_ratio):
-    params = list(params)
-    classifier = self._generateClassifier(algo, params)
-    modelPerformance = params + self._crossvalidate(folds, classifier, undersampe_ratio)
-    return modelPerformance
+    def build(fold, df, classifier, features, sampling_method, ratio):
 
-  @private class method
-  def _gridSearch(self，algo, grid, undersampe_ratio):
-    folds = self.folds
+        #undersample notfraud
+        validation = fold
+        train = df.subtract(fold)
+        train = sample(train, sampling_method, ratio)
+        vectorAssembler = VectorAssembler(inputCols = features, outputCol = 'features')
+        vector_train = vectorAssembler.transform(train)
+        vector_validate = vectorAssembler.transform(validation)
+        model = classifier.fit(vector_train)
+        pred = model.transform(vector_validate)
+        pos = pred.filter(pred.prediction == 1.0).count()
+        if pos != 0:
+            precision = pred.filter(pred.Class == pred.prediction).filter(pred.Class == 1.0).count() / pos
+        else:
+            precision = 0
+        fraud = pred.filter(pred.Class == 1.0).count()
+        if fraud != 0:
+            recall = pred.filter(pred.Class == pred.prediction).filter(pred.Class == 1.0).count() / fraud
+        else:
+            recall = 0
+        precision_recall = precision + recall
+        if precision_recall != 0:
+            f_score = 2 * precision * recall /(precision_recall)
+        else:
+            f_score = 0
+        print("\n precision, recall, f_score: " + str(precision) + ", " + str(recall) + ", " + str(f_score))
+        return [precision, recall, f_score]
 
-    #for params in grid:
-      #classifier = generateClassifier(algo, list(params))
-      #modelPerformance = paramcombo + crossvalidate(folds, classifier, undersampe_ratio)
-    #ind = avgFScore.indexOf(max(avgFscore))
-    #return result[ind][:-3]
+    #call multiprocessing here
+    cvperformance = pool.map(lambda fold: build(fold, df, classifier, features, sampling_method, ratio), folds)
 
-    result = self.pool.map(lambda params: self._collectResult(folds, algo, params, undersample_ratio), grid)
-    return result
+    #calculate metrics
+    precision_sum = sum([x[0] for x in cvperformance])
+    recall_sum = sum([x[1] for x in cvperformance])
 
-  @private class method
-  def _getBestModel(self,algo,params):
-    #TODO: convert to pyspark
-    ############################################################################
-    classifer = _generateClassifier(algo, bestHyperParams)
-    df = join(self.folds)
-    bestmodel = classifier.fit(df)
+    avg_precision = precision_sum/k
+    avg_recall = recall_sum/k
+    avg_fscore = 2 * avg_precision * avg_recall /(avg_precision+avg_recall)
+    return [avg_precision,avg_recall,avg_fscore]
+
+def gridSearch(df, folds, k, algo, grid, features, sampling_method, ratio, pool):
+
+    best_hyper = None
+    best_precision = 0
+    best_recall = 0
+    best_fscore = 0
+
+    for i in range(len(grid)):
+        params = list(grid[i])
+        classifier = generateClassifier(algo, params, features)
+        modelPerformance = crossValidate(df, folds, k, classifier, features, sampling_method, ratio, pool)
+        if modelPerformance[2] > best_fscore:
+            best_hyper = params
+            best_precision = modelPerformance[0]
+            best_recall = modelPerformance[1]
+            best_fscore = modelPerformance[2]
+
+    return best_hyper, best_precision, best_recall, best_fscore
+
+def trainBestModel(df,algo,features,params):
+    vectorAssembler = VectorAssembler(inputCols = features, outputCol = 'features')
+    classifier = generateClassifier(algo, params, features)
+    vector_train = vectorAssembler.transform(df)
+    bestmodel = classifier.fit(vector_train)
     return bestmodel
-    ############################################################################
 
-  @public class method
-  def tune(self, algo, undersample_ratio, *args):
-    #generate hyper parameter grid
-    grid = self._generateParamGrid(*args)
+def tune(df, k, stratification_flag, sampling_method, ratio, modelobj_flag, features, algo, *args):
+
+    """
+        Entry point of this suite of functions. returns cv metrics or a model object
+        Example:
+            >>> cv_hyper, cv_precision, cv_recall, cv_fscore = tune(df, 5, True,
+            'None', 0, False, features, 'mlp', [100], [15], [0.03])
+
+        :param df: data for modeling purpose
+        :type df: : pyspark dataframe
+        :param k: number of folds for cross validation
+        :type k: int
+        :param stratification_flag: specifies whether fraud ratio is fixed for each fold. True for stratification
+        :type stratification_flag: boolean
+        :param sampling_method: "over" for oversampling minority class, "under" for undersampling majority class, "None"
+        :type sampling_method: str
+        :param ratio: targeted fraud ratio after sampling.
+        :type ratio: float
+        :param modelobj_flag: specifies whether to return a model object for out of time test. if False, returns cv performancce
+        :type modelobj_flag: float
+        :param features: features for training
+        :type features: list
+        :param *args: a sequence of params for hyperparams tuning. ex. [values for params1], [values for params2],...
+        :type *args: list
+        :returns: model object or cross validation metrics depending on modelobj_flag
+        """
+
+    pool = ThreadPool(2)
+
+    #reduce df dimenions to include features and class
+    cols = features+['Class', 'index']
+    df = df.select(cols)
+    df = df.select(*(F.col(c).cast("double").alias(c) for c in df.columns))
+    #df.drop("index")
+
+    folds = []
+
+    if stratification_flag == False:
+
+        tot_count = df.select("Class").count()
+        n = int(tot_count / k)
+        print("each random fold should have " + str(n) + " rows")
+
+        #create sub-dataframe iteratively
+        fold_start = 1
+        fold_end = n
+        for i in range(k):
+            fold = df.select('*').where(df.index.between(fold_start, fold_end))
+
+            #print(str(fold_start) + " " + str(fold_end))
+            folds.append(fold)
+            fold_start = fold_end + 1
+            fold_end = fold_start + n
+            if i == k-2:
+                end = tot_count
+
+    #ensure each fold has the same number of records and same fraud ratio
+    if stratification_flag == True:
+
+        fraud = df.select("*").where(df.Class == 1.0)
+        #shuffle undersampled dataframe
+        nrows = fraud.select("Class").count()
+        shuffled = fraud.rdd.takeSample(False, nrows)
+        fraud = sqlContext.createDataFrame(shuffled)
+        #add row index to dataframe
+        fraud = fraud.withColumn('dummy', F.lit('7'))
+        fraud = fraud.withColumn("temp_index", F.row_number().over(Window.partitionBy("dummy").orderBy("dummy")))
+        fraud = fraud.drop('dummy')
+        fraud_count = fraud.select("Class").count()
+        each_fraud = int(fraud_count/k)
+
+        notfraud = df.select("*").where(df.Class == 0.0)
+        nrows = notfraud.select("Class").count()
+        shuffled = notfraud.rdd.takeSample(False, nrows)
+        notfraud = sqlContext.createDataFrame(shuffled)
+        #add row index to dataframe
+        notfraud = notfraud.withColumn('dummy', F.lit('7'))
+        notfraud = notfraud.withColumn("temp_index", F.row_number().over(Window.partitionBy("dummy").orderBy("dummy")))
+        notfraud = notfraud.drop('dummy')
+        notfraud_count = notfraud.select("Class").count()
+        each_notfraud = int(notfraud_count/k)
+
+        fraud_start = 1
+        fraud_end = each_fraud
+        notfraud_start = 1
+        notfraud_end = each_notfraud
+
+        print("each stratified fold should have " + str(each_fraud+each_notfraud) + " rows")
+
+        for i in range(k):
+            fraud_fold  = fraud.select('*').where(fraud.temp_index.between(fraud_start, fraud_end))
+            notfraud_fold = notfraud.select('*').where(notfraud.temp_index.between(notfraud_start, notfraud_end))
+            fold = fraud_fold.union(notfraud_fold).drop("temp_index")
+            folds.append(fold)
+            fraud_start = fraud_end + 1
+            fraud_end = fraud_start + each_fraud
+            notfraud_start = notfraud_end + 1
+            notfraud_end = notfraud_start + each_notfraud
+            if i == k-2:
+                fraud_end = fraud_count
+                notfraud_end = notfraud_count
+
+    #generate hyperparam combo
+    grid = generateParamGrid(*args)
 
     #conduct grid search:
-    results = gridSearch(self，algo, parameterGrid, undersampe_ratio)
-    max_fscore = 0
-    besthyperparams = None
-    for result in results:
-      if result[-1] > max_fscore:
-        max_fscore = result[-1]
-        besthyperparams = result[:-3]
-    best_model = self._getBestModel(algo,besthyperparams)
-    self.modelobj = CreateBestModel(algo, avgfscore, avgrecall, besthyperparams, best_model, result)
-    return self.modelobj
+    best_hyper, best_precision, best_recall, best_fscore = gridSearch(df, folds, k, algo, grid, features, sampling_method, ratio, pool)
 
-  #TODO: convert to pyspark code
-  ############################################################################
-  @public class method
-  def save(self):
-    modelobj = self.modelobj
-    save modelobj as modelobj.algo.dat
-  ############################################################################
+    if modelobj_flag == True:
+        #generate a model obj
+        best_model = trainBestModel(trimmed_df,algo,features,best_hyper)
+        modelobj = CreateBestModel(algo, best_precision, best_recall, best_fscore, best_hyper, best_model)
+        return modelobj
+
+    return best_hyper, best_precision, best_recall, best_fscore
+
+def save(modelobj, filename):
+
+    modelobj = modelobj
+    pickle.dump(modelobj, open(filename, "wb"))
+
+def load(filename):
+
+    modelobj = pickle.load(open(filename, "rb"))
+    return modelobj
