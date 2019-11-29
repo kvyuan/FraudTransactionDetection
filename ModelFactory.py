@@ -14,6 +14,11 @@ import copy
 
 from pyspark.ml.classification import MultilayerPerceptronClassifier
 from pyspark.ml.evaluation import MulticlassClassificationEvaluator
+from pyspark.ml.evaluation import MulticlassClassificationEvaluator
+from pyspark.ml.classification import RandomForestClassifier
+from pyspark.ml.classification import LogisticRegression
+from pyspark.ml.classification import GBTClassifier
+from pyspark.ml.evaluation import BinaryClassificationEvaluator
 
 #libraries for plotting
 import matplotlib.gridspec as gridspec
@@ -39,14 +44,12 @@ def sample(df, sampling_method, ratio):
     fraud = df.select('*').where(df.Class == 1.0)
 
     if sampling_method == "over":
-        print("oversampling")
         nrows = notfraud.select("Class").count()
         sample_size = int(nrows*ratio/(1-ratio))
         sampled = fraud.rdd.takeSample(True, sample_size, 46)
         fraud = sqlContext.createDataFrame(sampled)
 
     elif sampling_method == "under":
-        print("undersampling")
         nrows = fraud.select("Class").count()
         sample_size = int(nrows*(1-ratio)/ratio)
         sampled = notfraud.rdd.takeSample(False, sample_size, 46)
@@ -201,31 +204,6 @@ def trainBestModel(df,algo,features,params):
 
 def tune(df, k, stratification_flag, sampling_method, ratio, modelobj_flag, features, algo, *args):
 
-    """
-        Entry point of this suite of functions. returns cv metrics or a model object
-        Example:
-            >>> cv_hyper, cv_precision, cv_recall, cv_fscore = tune(df, 5, True,
-            'None', 0, False, features, 'mlp', [100], [15], [0.03])
-
-        :param df: data for modeling purpose
-        :type df: : pyspark dataframe
-        :param k: number of folds for cross validation
-        :type k: int
-        :param stratification_flag: specifies whether fraud ratio is fixed for each fold. True for stratification
-        :type stratification_flag: boolean
-        :param sampling_method: "over" for oversampling minority class, "under" for undersampling majority class, "None"
-        :type sampling_method: str
-        :param ratio: targeted fraud ratio after sampling.
-        :type ratio: float
-        :param modelobj_flag: specifies whether to return a model object for out of time test. if False, returns cv performancce
-        :type modelobj_flag: float
-        :param features: features for training
-        :type features: list
-        :param *args: a sequence of params for hyperparams tuning. ex. [values for params1], [values for params2],...
-        :type *args: list
-        :returns: model object or cross validation metrics depending on modelobj_flag
-        """
-
     pool = ThreadPool(2)
 
     #reduce df dimenions to include features and class
@@ -240,15 +218,12 @@ def tune(df, k, stratification_flag, sampling_method, ratio, modelobj_flag, feat
 
         tot_count = df.select("Class").count()
         n = int(tot_count / k)
-        print("each random fold should have " + str(n) + " rows")
 
         #create sub-dataframe iteratively
         fold_start = 1
         fold_end = n
         for i in range(k):
             fold = df.select('*').where(df.index.between(fold_start, fold_end))
-
-            #print(str(fold_start) + " " + str(fold_end))
             folds.append(fold)
             fold_start = fold_end + 1
             fold_end = fold_start + n
@@ -286,8 +261,6 @@ def tune(df, k, stratification_flag, sampling_method, ratio, modelobj_flag, feat
         notfraud_start = 1
         notfraud_end = each_notfraud
 
-        print("each stratified fold should have " + str(each_fraud+each_notfraud) + " rows")
-
         for i in range(k):
             fraud_fold  = fraud.select('*').where(fraud.temp_index.between(fraud_start, fraud_end))
             notfraud_fold = notfraud.select('*').where(notfraud.temp_index.between(notfraud_start, notfraud_end))
@@ -324,3 +297,18 @@ def load(filename):
 
     modelobj = pickle.load(open(filename, "rb"))
     return modelobj
+
+#############Example###########
+
+sc=pyspark.SparkContext.getOrCreate()
+sqlContext = SQLContext(sc)
+
+df = sqlContext.read.csv("modeling.csv", header = True)
+features = ['V3', 'V4', 'V7', 'V9', 'V10', 'V11', 'V12', 'V14', 'V16', 'V17', 'V18']
+hiddenlayer = int((len(features) + 2) / 2)
+cv_hyper, cv_precision, cv_recall, cv_fscore = tune(df, 5, True, 'None', 0, False, features, 'mlp', [100], [hiddenlayer], [0.03])
+print("avg precision:", cv_precision)
+print("avg recall:", cv_recall)
+print("avg f-score:", cv_fscore)
+
+sqlContext.clearCache()
