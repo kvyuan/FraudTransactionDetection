@@ -117,7 +117,13 @@ def generateClassifier(algo, params, features):
         return mlpClassifier
 
     def svm(params, features):
-        return
+        svm = LinearSVC(featuresCol = 'features',
+                         labelCol='Class', 
+                         standardization=True,
+                         maxIter=params[0],
+                         regParam=params[1],
+                         tol =params[2])
+        return svm
 
     def xg(params,features):
         return
