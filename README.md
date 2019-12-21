@@ -8,6 +8,9 @@ This is the code base for MIE1628 big data science course project at the Univers
 * Xin Zhon 
 * Miti Modi
 
+## Data File Location
+https://drive.google.com/open?id=1BLCJRbjriIuoaVEklNCfD22VcxfZPMjX
+
 ## Plotting Dependencies
 * matplotlib
 * seaborn
